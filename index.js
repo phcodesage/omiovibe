@@ -5,23 +5,39 @@ const cors = require('cors');
 const { ExpressPeerServer } = require('peer');
 const path = require('path');
 const app = express();
-app.use(cors());
+
+// CORS configuration
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 
 const server = http.createServer(app);
 
-// Initialize PeerJS server
+// Initialize PeerJS server with better configuration
 const peerServer = ExpressPeerServer(server, {
   debug: true,
-  path: '/myapp'
+  path: '/myapp',
+  allow_discovery: true,
+  proxied: true,
+  expire_timeout: 5000,
+  alive_timeout: 60000,
+  key: 'peerjs',
+  concurrent_limit: 5000
 });
 
 app.use('/peerjs', peerServer);
 
+// Socket.IO configuration
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
-    methods: ["GET", "POST"]
-  }
+    origin: true,
+    credentials: true
+  },
+  allowEIO3: true,
+  transports: ['websocket', 'polling'],
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 const waitingUsers = new Set();
@@ -30,8 +46,17 @@ const activeRooms = new Map(); // Track active rooms and their participants
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
+  socket.on('ice-candidate', ({ candidate, roomId }) => {
+    // Forward ICE candidate to the other peer in the room
+    const roomParticipants = activeRooms.get(roomId) || [];
+    const partner = roomParticipants.find(id => id !== socket.id);
+    if (partner) {
+      io.to(partner).emit('ice-candidate', { candidate });
+    }
+  });
+
   socket.on('find-partner', () => {
-    // If user was in a room, remove them
+    // Remove from previous room if any
     const previousRoom = [...socket.rooms].find(room => room !== socket.id);
     if (previousRoom) {
       socket.leave(previousRoom);
@@ -42,26 +67,27 @@ io.on('connection', (socket) => {
         activeRooms.delete(previousRoom);
       } else {
         activeRooms.set(previousRoom, updatedParticipants);
+        // Notify the other participant
+        io.to(updatedParticipants[0]).emit('partner-left');
       }
     }
 
+    // Find new partner
     if (waitingUsers.size > 0) {
       const partner = Array.from(waitingUsers)[0];
       waitingUsers.delete(partner);
       
-      // Create a new room
       const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       socket.join(roomId);
       io.sockets.sockets.get(partner)?.join(roomId);
       
-      // Store room participants
       activeRooms.set(roomId, [socket.id, partner]);
+      
+      console.log(`Room ${roomId} created with users:`, socket.id, partner);
       
       // Notify both users
       socket.emit('partner-found', { partnerId: partner, roomId });
       io.to(partner).emit('partner-found', { partnerId: socket.id, roomId });
-      
-      console.log(`Room ${roomId} created with users:`, socket.id, partner);
     } else {
       waitingUsers.add(socket.id);
       console.log('User added to waiting list:', socket.id);
@@ -100,13 +126,15 @@ io.on('connection', (socket) => {
   });
 });
 
-app.get('/', (req, res) => {
+// Serve static files
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// Handle all routes - serve index.html for client-side routing
+app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-app.use(express.static(path.join(__dirname, 'dist')));
-
-const PORT = process.env.PORT || 5000;
+const PORT = 5000;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server running on http://localhost:${PORT}`);
 }); 
