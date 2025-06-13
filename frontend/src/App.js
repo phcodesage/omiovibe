@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 const socket = io('http://localhost:5000');
@@ -9,15 +9,22 @@ function App() {
   const [input, setInput] = useState("");
   const [username, setUsername] = useState("");
   const [showUsernameInput, setShowUsernameInput] = useState(true);
+  const [isTyping, setIsTyping] = useState(false);
+  const [typingUser, setTypingUser] = useState("");
+  const [partnerUsername, setPartnerUsername] = useState("");
+  const typingTimeoutRef = useRef(null);
 
   useEffect(() => {
-    socket.on('matched', () => {
+    socket.on('matched', (data) => {
       setConnected(true);
-      setMessages([{text: "🔗 Connected to a stranger. Say hi!", isSystem: true}]);
+      setPartnerUsername(data.partner_username || 'Stranger');
+      setMessages([{text: `🔗 Connected to ${data.partner_username || 'a stranger'}. Say hi!`, isSystem: true}]);
     });
 
     socket.on('chat_message', (data) => {
       setMessages(prev => [...prev, {text: data.text, username: data.username, isIncoming: true}]);
+      // Clear typing indicator when a message is received
+      setTypingUser('');
     });
 
     socket.on('partner_disconnected', () => {
@@ -25,7 +32,20 @@ function App() {
       setMessages(prev => [...prev, {text: "❌ Stranger disconnected.", isSystem: true}]);
     });
 
-    return () => socket.disconnect();
+    socket.on('user_typing', (data) => {
+      setTypingUser(data.username || 'Stranger');
+    });
+
+    socket.on('user_stopped_typing', () => {
+      setTypingUser('');
+    });
+
+    return () => {
+      socket.disconnect();
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    };
   }, []);
 
   const handleSetUsername = () => {
@@ -34,6 +54,33 @@ function App() {
       setShowUsernameInput(false);
       socket.emit('join');
     }
+  };
+
+  const handleInputChange = (e) => {
+    const value = e.target.value;
+    setInput(value);
+    
+    // Notify others when user starts typing
+    if (!isTyping && value.trim() !== '') {
+      socket.emit('typing');
+      setIsTyping(true);
+    } else if (value === '' && isTyping) {
+      socket.emit('stop_typing');
+      setIsTyping(false);
+    }
+    
+    // Clear any existing timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    
+    // Set a timeout to stop the typing indicator after a delay
+    typingTimeoutRef.current = setTimeout(() => {
+      if (isTyping) {
+        socket.emit('stop_typing');
+        setIsTyping(false);
+      }
+    }, 2000);
   };
 
   const sendMessage = () => {
@@ -87,7 +134,11 @@ function App() {
 
   return (
     <div style={{ padding: 20, maxWidth: 600, margin: '0 auto' }}>
-      <h2>Chat with a Stranger</h2>
+      <h2>
+        {connected 
+          ? `Chatting with ${partnerUsername}`
+          : 'Chat with a Stranger'}
+      </h2>
       <div style={{ 
         border: "1px solid #ccc", 
         padding: 10, 
@@ -95,15 +146,28 @@ function App() {
         overflowY: 'auto', 
         marginBottom: 10,
         borderRadius: '5px',
-        backgroundColor: '#f9f9f9'
+        backgroundColor: '#f9f9f9',
+        position: 'relative'
       }}>
         {messages.map((msg, i) => renderMessage(msg, i))}
+        {typingUser && (
+          <div style={{
+            position: 'absolute',
+            bottom: 5,
+            left: 15,
+            color: '#666',
+            fontStyle: 'italic',
+            fontSize: '0.9em'
+          }}>
+            {typingUser} is typing...
+          </div>
+        )}
       </div>
       {connected ? (
         <div style={{ display: 'flex' }}>
           <input
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
             placeholder="Type a message..."
             style={{ 

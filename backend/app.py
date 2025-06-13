@@ -25,7 +25,21 @@ def handle_join():
         paired_users[partner_sid] = room
         join_room(room, sid)
         join_room(room, partner_sid)
-        emit("matched", {"room": room}, room=room)
+        
+        # Get usernames
+        user1_data = user_data.get(sid, {'username': 'Stranger'})
+        user2_data = user_data.get(partner_sid, {'username': 'Stranger'})
+        
+        # Notify both users with each other's usernames
+        emit("matched", {
+            "room": room,
+            "partner_username": user2_data['username']
+        }, to=sid)
+        
+        emit("matched", {
+            "room": room,
+            "partner_username": user1_data['username']
+        }, to=partner_sid)
     else:
         waiting_users.append(sid)
 
@@ -52,6 +66,32 @@ def handle_message(data):
                 }, to=user_sid)
 
 
+
+@socketio.on('typing')
+def handle_typing():
+    sender_sid = request.sid
+    room = paired_users.get(sender_sid)
+    
+    if room:
+        # Get the sender's username
+        sender_username = user_data.get(sender_sid, {}).get('username', 'Stranger')
+        # Send to all other users in the room
+        for user_sid, user_room in paired_users.items():
+            if user_room == room and user_sid != sender_sid:
+                socketio.emit('user_typing', {
+                    'username': sender_username
+                }, to=user_sid)
+
+@socketio.on('stop_typing')
+def handle_stop_typing():
+    sender_sid = request.sid
+    room = paired_users.get(sender_sid)
+    
+    if room:
+        # Send to all other users in the room
+        for user_sid, user_room in paired_users.items():
+            if user_room == room and user_sid != sender_sid:
+                socketio.emit('user_stopped_typing', to=user_sid)
 
 @socketio.on('disconnect')
 def handle_disconnect():

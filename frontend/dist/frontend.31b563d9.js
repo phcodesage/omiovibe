@@ -16116,12 +16116,17 @@ function App() {
     const [input, setInput] = (0, _react.useState)("");
     const [username, setUsername] = (0, _react.useState)("");
     const [showUsernameInput, setShowUsernameInput] = (0, _react.useState)(true);
+    const [isTyping, setIsTyping] = (0, _react.useState)(false);
+    const [typingUser, setTypingUser] = (0, _react.useState)("");
+    const [partnerUsername, setPartnerUsername] = (0, _react.useState)("");
+    const typingTimeoutRef = (0, _react.useRef)(null);
     (0, _react.useEffect)(()=>{
-        socket.on('matched', ()=>{
+        socket.on('matched', (data)=>{
             setConnected(true);
+            setPartnerUsername(data.partner_username || 'Stranger');
             setMessages([
                 {
-                    text: "\uD83D\uDD17 Connected to a stranger. Say hi!",
+                    text: `\u{1F517} Connected to ${data.partner_username || 'a stranger'}. Say hi!`,
                     isSystem: true
                 }
             ]);
@@ -16135,6 +16140,8 @@ function App() {
                         isIncoming: true
                     }
                 ]);
+            // Clear typing indicator when a message is received
+            setTypingUser('');
         });
         socket.on('partner_disconnected', ()=>{
             setConnected(false);
@@ -16146,7 +16153,16 @@ function App() {
                     }
                 ]);
         });
-        return ()=>socket.disconnect();
+        socket.on('user_typing', (data)=>{
+            setTypingUser(data.username || 'Stranger');
+        });
+        socket.on('user_stopped_typing', ()=>{
+            setTypingUser('');
+        });
+        return ()=>{
+            socket.disconnect();
+            if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        };
     }, []);
     const handleSetUsername = ()=>{
         if (username.trim()) {
@@ -16156,6 +16172,27 @@ function App() {
             setShowUsernameInput(false);
             socket.emit('join');
         }
+    };
+    const handleInputChange = (e)=>{
+        const value = e.target.value;
+        setInput(value);
+        // Notify others when user starts typing
+        if (!isTyping && value.trim() !== '') {
+            socket.emit('typing');
+            setIsTyping(true);
+        } else if (value === '' && isTyping) {
+            socket.emit('stop_typing');
+            setIsTyping(false);
+        }
+        // Clear any existing timeout
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        // Set a timeout to stop the typing indicator after a delay
+        typingTimeoutRef.current = setTimeout(()=>{
+            if (isTyping) {
+                socket.emit('stop_typing');
+                setIsTyping(false);
+            }
+        }, 2000);
     };
     const sendMessage = ()=>{
         if (input.trim()) {
@@ -16183,7 +16220,7 @@ function App() {
             children: msg.text
         }, index, false, {
             fileName: "src/App.js",
-            lineNumber: 50,
+            lineNumber: 97,
             columnNumber: 14
         }, this);
         const isYou = !msg.isIncoming;
@@ -16202,20 +16239,20 @@ function App() {
                     children: displayName
                 }, void 0, false, {
                     fileName: "src/App.js",
-                    lineNumber: 65,
+                    lineNumber: 112,
                     columnNumber: 9
                 }, this),
                 /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
                     children: msg.text
                 }, void 0, false, {
                     fileName: "src/App.js",
-                    lineNumber: 66,
+                    lineNumber: 113,
                     columnNumber: 9
                 }, this)
             ]
         }, index, true, {
             fileName: "src/App.js",
-            lineNumber: 57,
+            lineNumber: 104,
             columnNumber: 7
         }, this);
     };
@@ -16229,7 +16266,7 @@ function App() {
                 children: "Enter Your Username"
             }, void 0, false, {
                 fileName: "src/App.js",
-                lineNumber: 74,
+                lineNumber: 121,
                 columnNumber: 9
             }, this),
             /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("input", {
@@ -16243,7 +16280,7 @@ function App() {
                 }
             }, void 0, false, {
                 fileName: "src/App.js",
-                lineNumber: 75,
+                lineNumber: 122,
                 columnNumber: 9
             }, this),
             /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("button", {
@@ -16251,13 +16288,13 @@ function App() {
                 children: "Start Chatting"
             }, void 0, false, {
                 fileName: "src/App.js",
-                lineNumber: 83,
+                lineNumber: 130,
                 columnNumber: 9
             }, this)
         ]
     }, void 0, true, {
         fileName: "src/App.js",
-        lineNumber: 73,
+        lineNumber: 120,
         columnNumber: 7
     }, this);
     return /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
@@ -16268,10 +16305,10 @@ function App() {
         },
         children: [
             /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("h2", {
-                children: "Chat with a Stranger"
+                children: connected ? `Chatting with ${partnerUsername}` : 'Chat with a Stranger'
             }, void 0, false, {
                 fileName: "src/App.js",
-                lineNumber: 90,
+                lineNumber: 137,
                 columnNumber: 7
             }, this),
             /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
@@ -16282,12 +16319,33 @@ function App() {
                     overflowY: 'auto',
                     marginBottom: 10,
                     borderRadius: '5px',
-                    backgroundColor: '#f9f9f9'
+                    backgroundColor: '#f9f9f9',
+                    position: 'relative'
                 },
-                children: messages.map((msg, i)=>renderMessage(msg, i))
-            }, void 0, false, {
+                children: [
+                    messages.map((msg, i)=>renderMessage(msg, i)),
+                    typingUser && /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
+                        style: {
+                            position: 'absolute',
+                            bottom: 5,
+                            left: 15,
+                            color: '#666',
+                            fontStyle: 'italic',
+                            fontSize: '0.9em'
+                        },
+                        children: [
+                            typingUser,
+                            " is typing..."
+                        ]
+                    }, void 0, true, {
+                        fileName: "src/App.js",
+                        lineNumber: 154,
+                        columnNumber: 11
+                    }, this)
+                ]
+            }, void 0, true, {
                 fileName: "src/App.js",
-                lineNumber: 91,
+                lineNumber: 142,
                 columnNumber: 7
             }, this),
             connected ? /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
@@ -16297,7 +16355,7 @@ function App() {
                 children: [
                     /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("input", {
                         value: input,
-                        onChange: (e)=>setInput(e.target.value),
+                        onChange: handleInputChange,
                         onKeyDown: (e)=>e.key === 'Enter' && sendMessage(),
                         placeholder: "Type a message...",
                         style: {
@@ -16309,7 +16367,7 @@ function App() {
                         }
                     }, void 0, false, {
                         fileName: "src/App.js",
-                        lineNumber: 104,
+                        lineNumber: 168,
                         columnNumber: 11
                     }, this),
                     /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("button", {
@@ -16325,13 +16383,13 @@ function App() {
                         children: "Send"
                     }, void 0, false, {
                         fileName: "src/App.js",
-                        lineNumber: 117,
+                        lineNumber: 181,
                         columnNumber: 11
                     }, this)
                 ]
             }, void 0, true, {
                 fileName: "src/App.js",
-                lineNumber: 103,
+                lineNumber: 167,
                 columnNumber: 9
             }, this) : /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
                 style: {
@@ -16341,17 +16399,17 @@ function App() {
                 children: "Waiting to connect with a stranger..."
             }, void 0, false, {
                 fileName: "src/App.js",
-                lineNumber: 132,
+                lineNumber: 196,
                 columnNumber: 9
             }, this)
         ]
     }, void 0, true, {
         fileName: "src/App.js",
-        lineNumber: 89,
+        lineNumber: 136,
         columnNumber: 5
     }, this);
 }
-_s(App, "VSkyiNhQWE2yLRSdGYKexIGmKt8=");
+_s(App, "Siz+SbPjqW2eUdQTMx/OnoJPilw=");
 _c = App;
 exports.default = App;
 var _c;
