@@ -249,6 +249,28 @@ def handle_stop_typing():
         room = paired_users[sid]
         emit('user_stopped_typing', room=room, skip_sid=sid)
 
+# WebRTC Signaling Handlers
+@socketio.on('offer')
+def handle_offer(data):
+    sid = request.sid
+    if sid in paired_users:
+        room = paired_users[sid]
+        emit('offer', data, room=room, skip_sid=sid)
+
+@socketio.on('answer')
+def handle_answer(data):
+    sid = request.sid
+    if sid in paired_users:
+        room = paired_users[sid]
+        emit('answer', data, room=room, skip_sid=sid)
+
+@socketio.on('ice-candidate')
+def handle_ice_candidate(data):
+    sid = request.sid
+    if sid in paired_users:
+        room = paired_users[sid]
+        emit('ice-candidate', data, room=room, skip_sid=sid)
+
 if __name__ == '__main__':
     print(" Server is running on http://localhost:5000 ...")
     socketio.run(app, host='0.0.0.0', port=5000)

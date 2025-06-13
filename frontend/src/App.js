@@ -1,282 +1,288 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { io } from 'socket.io-client';
-import EmojiPicker from 'emoji-picker-react';
+import React, { useState, useEffect, useRef } from 'react';
+import io from 'socket.io-client';
 
-const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
-const socket = io(backendUrl);
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
+const socket = io(BACKEND_URL);
+
+const peerConnectionConfig = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+    ],
+};
 
 function App() {
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
-  const [typingUser, setTypingUser] = useState("");
-  const [partnerUsername, setPartnerUsername] = useState("");
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [status, setStatus] = useState('idle'); // 'idle', 'waiting', 'in_chat'
-  const [authMode, setAuthMode] = useState('login'); // 'login', 'register', 'forgot_password'
-  const [error, setError] = useState('');
-  const typingTimeoutRef = useRef(null);
-  const inputRef = useRef(null);
-  const messagesEndRef = useRef(null);
+    // Auth State
+    const [authState, setAuthState] = useState('login');
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [error, setError] = useState('');
+    const [loggedInUser, setLoggedInUser] = useState(null);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    // Chat & App State
+    const [chatState, setChatState] = useState('idle'); // idle, waiting, in_chat
+    const [messages, setMessages] = useState([]);
+    const [messageInput, setMessageInput] = useState('');
+    const [partnerUsername, setPartnerUsername] = useState('');
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
+    // Video & WebRTC State
+    const [localStream, setLocalStream] = useState(null);
+    const [remoteStream, setRemoteStream] = useState(null);
+    const peerConnectionRef = useRef(null);
+    const localVideoRef = useRef();
+    const remoteVideoRef = useRef();
 
-    const onWaiting = () => {
-      setMessages(prev => [...prev, {text: "🔍 Looking for someone to chat with...", isSystem: true}]);
-      setStatus('waiting');
-      setPartnerUsername('');
-    };
-    const onMatched = (data) => {
-      setMessages([{text: `🔗 Connected to ${data.partner_username || 'a stranger'}. Say hi!`, isSystem: true}]);
-      setPartnerUsername(data.partner_username || 'Stranger');
-      setStatus('in_chat');
-    };
-    const onStoppedChat = () => {
-      setMessages(prev => [...prev, {text: "🛑 You have stopped the chat.", isSystem: true}]);
-      setStatus('idle');
-      setPartnerUsername('');
-    };
-    const onPartnerDisconnected = () => {
-      setMessages(prev => [...prev, {text: "❌ Stranger has disconnected.", isSystem: true}]);
-      setStatus('idle');
-      setPartnerUsername('');
-    };
-    const onPartnerSkipped = () => {
-      setMessages(prev => [...prev, {text: "⏩ Your partner skipped. Finding a new chat...", isSystem: true}]);
-      // Server will send 'waiting' event next
-    };
-    const onChatMessage = (data) => {
-        setMessages(prev => [...prev, {text: data.text, username: data.username, isIncoming: true}]);
-        setTypingUser('');
-    };
-    const onUserTyping = (data) => setTypingUser(data.username || 'Stranger');
-    const onUserStoppedTyping = () => setTypingUser('');
+    useEffect(() => {
+        if (localStream && localVideoRef.current) {
+            localVideoRef.current.srcObject = localStream;
+        }
+    }, [localStream]);
 
-    socket.on('waiting', onWaiting);
-    socket.on('matched', onMatched);
-    socket.on('stopped_chat', onStoppedChat);
-    socket.on('partner_disconnected', onPartnerDisconnected);
-    socket.on('partner_skipped', onPartnerSkipped);
-    socket.on('chat_message', onChatMessage);
-    socket.on('user_typing', onUserTyping);
-    socket.on('user_stopped_typing', onUserStoppedTyping);
+    useEffect(() => {
+        if (remoteStream && remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+        }
+    }, [remoteStream]);
 
-    return () => {
-      socket.off('waiting', onWaiting);
-      socket.off('matched', onMatched);
-      socket.off('stopped_chat', onStoppedChat);
-      socket.off('partner_disconnected', onPartnerDisconnected);
-      socket.off('partner_skipped', onPartnerSkipped);
-      socket.off('chat_message', onChatMessage);
-      socket.off('user_typing', onUserTyping);
-      socket.off('user_stopped_typing', onUserStoppedTyping);
-    };
-  }, [isAuthenticated]);
+    useEffect(() => {
+        if (!loggedInUser) return;
 
-  const handleAuth = async (e) => {
-    e.preventDefault();
-    setError('');
-    let url = `${backendUrl}/${authMode}`;
-    let body = { username, password };
+        const createPeerConnection = () => {
+            const pc = new RTCPeerConnection(peerConnectionConfig);
 
-    if (authMode === 'register') {
-        // No change to body
-    } else if (authMode === 'login') {
-        // No change to body
-    } else if (authMode === 'forgot_password') {
-        url = `${backendUrl}/forgot_password`;
-        body = { username, new_password: newPassword };
-    }
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('ice-candidate', { candidate: event.candidate });
+                }
+            };
 
-    try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
+            pc.ontrack = (event) => {
+                setRemoteStream(event.streams[0]);
+            };
+
+            if (localStream) {
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            }
+
+            peerConnectionRef.current = pc;
+        };
+
+        const handleMatched = async ({ partner_username, is_initiator }) => {
+            setPartnerUsername(partner_username);
+            setChatState('in_chat');
+            createPeerConnection();
+
+            if (is_initiator) {
+                const offer = await peerConnectionRef.current.createOffer();
+                await peerConnectionRef.current.setLocalDescription(offer);
+                socket.emit('offer', { offer });
+            }
+        };
+
+        const handleOffer = async ({ offer }) => {
+            if (!peerConnectionRef.current) createPeerConnection();
+            await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await peerConnectionRef.current.createAnswer();
+            await peerConnectionRef.current.setLocalDescription(answer);
+            socket.emit('answer', { answer });
+        };
+
+        const handleAnswer = async ({ answer }) => {
+            await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+        };
+
+        const handleIceCandidate = async ({ candidate }) => {
+            try {
+                await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (e) {
+                console.error('Error adding received ice candidate', e);
+            }
+        };
+
+        const cleanupConnection = () => {
+            if (peerConnectionRef.current) {
+                peerConnectionRef.current.close();
+                peerConnectionRef.current = null;
+            }
+            setRemoteStream(null);
+            setPartnerUsername('');
+            setMessages([]);
+            setChatState('idle');
+        };
+
+        socket.on('matched', handleMatched);
+        socket.on('offer', handleOffer);
+        socket.on('answer', handleAnswer);
+        socket.on('ice-candidate', handleIceCandidate);
+        socket.on('partner_disconnected', cleanupConnection);
+        socket.on('partner_skipped', cleanupConnection);
+        socket.on('stopped_chat', cleanupConnection);
+        socket.on('chat_message', (data) => {
+            setMessages(prev => [...prev, { text: data.text, username: data.username, isIncoming: true }]);
         });
 
-        const data = await response.json();
+        return () => {
+            socket.off('matched');
+            socket.off('offer');
+            socket.off('answer');
+            socket.off('ice-candidate');
+            socket.off('partner_disconnected');
+            socket.off('partner_skipped');
+            socket.off('stopped_chat');
+            socket.off('chat_message');
+            cleanupConnection();
+        };
 
-        if (response.ok) {
-            if (authMode === 'login') {
-                setIsAuthenticated(true);
-                setUsername(data.username);
-            } else if (authMode === 'register') {
-                setAuthMode('login');
-                alert('Registration successful! Please log in.');
-            } else if (authMode === 'forgot_password') {
-                setAuthMode('login');
-                alert('Password has been reset! Please log in.');
-            }
-        } else {
-            setError(data.error || 'An unknown error occurred.');
+    }, [loggedInUser, localStream]);
+
+    const startLocalVideo = async () => {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            setLocalStream(stream);
+        } catch (err) {
+            console.error("Error accessing media devices.", err);
+            setError("Camera access is required to chat. Please allow access and refresh the page.");
         }
-    } catch (err) {
-        setError('Failed to connect to the server.');
-    }
-  };
+    };
 
-  const handleStartSearching = () => socket.emit('start_searching', { username });
-  const handleStopChat = () => socket.emit('stop_chat');
-  const handleSkipChat = () => socket.emit('skip_chat');
+    const handleAuth = async (e) => {
+        e.preventDefault();
+        setError('');
+        let endpoint = authState;
+        let payload = { username, password };
 
-  const handleInputChange = (e) => {
-    const value = e.target.value;
-    setInput(value);
-    if (!isTyping && value.trim() !== '') {
-      socket.emit('typing');
-      setIsTyping(true);
-    } else if (value === '' && isTyping) {
-      socket.emit('stop_typing');
-      setIsTyping(false);
-    }
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => {
-      if (isTyping) {
-        socket.emit('stop_typing');
-        setIsTyping(false);
-      }
-    }, 2000);
-  };
+        if (authState === 'forgot_password') {
+            payload = { username, new_password: newPassword };
+        }
 
-  const sendMessage = () => {
-    if (input.trim()) {
-      const message = input.trim();
-      socket.emit('chat_message', { text: message });
-      setMessages(prev => [...prev, {text: message, username: 'You', isIncoming: false}]);
-      setInput("");
-      socket.emit('stop_typing');
-      setIsTyping(false);
-    }
-  };
+        try {
+            const response = await fetch(`${BACKEND_URL}/${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
 
-  const toggleEmojiPicker = () => setShowEmojiPicker(!showEmojiPicker);
+            const data = await response.json();
 
-  const onEmojiClick = (emojiData) => {
-    const emoji = emojiData.emoji;
-    const cursorPosition = inputRef.current.selectionStart;
-    const textBeforeCursor = input.substring(0, cursorPosition);
-    const textAfterCursor = input.substring(cursorPosition);
-    setInput(textBeforeCursor + emoji + textAfterCursor);
-    setTimeout(() => {
-      const newPosition = cursorPosition + emoji.length;
-      inputRef.current.setSelectionRange(newPosition, newPosition);
-    }, 0);
-    setShowEmojiPicker(false);
-  };
+            if (response.ok) {
+                if (authState === 'login') {
+                    setLoggedInUser(data.username);
+                    await startLocalVideo();
+                } else {
+                    setAuthState('login');
+                    alert('Action successful! Please log in.');
+                }
+            } else {
+                setError(data.error || 'An unknown error occurred.');
+            }
+        } catch (err) {
+            setError('Failed to connect to the server.');
+        }
+    };
 
-  const renderMessage = (msg, index) => {
-    if (msg.isSystem) {
-      return (
-        <div key={index} style={{textAlign: 'center', color: '#666', margin: '10px 0', padding: '5px', fontSize: '0.9em'}}>
-          {msg.text}
+    const handleStartSearching = () => {
+        setChatState('waiting');
+        socket.emit('start_searching', { username: loggedInUser });
+    };
+
+    const handleStopOrSkip = (action) => {
+        socket.emit(action);
+    };
+
+    const sendMessage = () => {
+        if (messageInput.trim()) {
+            const text = messageInput.trim();
+            socket.emit('chat_message', { text });
+            setMessages(prev => [...prev, { text, username: 'You', isIncoming: false }]);
+            setMessageInput('');
+        }
+    };
+
+    const renderAuthForm = () => (
+        <div className="flex flex-col items-center justify-center h-screen text-center bg-gray-100">
+            <div className="w-full max-w-md p-10 bg-white rounded-lg shadow-lg">
+                <h2 className="mt-0 mb-5 text-2xl font-bold capitalize">{authState.replace('_', ' ')}</h2>
+                <form onSubmit={handleAuth}>
+                    <input type="text" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} required className="w-full p-3 mb-4 text-base border border-gray-300 rounded-md" />
+                    {authState !== 'forgot_password' && (
+                        <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full p-3 mb-4 text-base border border-gray-300 rounded-md" />
+                    )}
+                    {authState === 'forgot_password' && (
+                        <input type="password" placeholder="New Password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required className="w-full p-3 mb-4 text-base border border-gray-300 rounded-md" />
+                    )}
+                    <button type="submit" className="w-full p-3 text-base text-white bg-blue-500 border-none rounded-md cursor-pointer hover:bg-blue-700">{authState}</button>
+                    {error && <p className="mt-3 text-red-600">{error}</p>}
+                </form>
+                <p className="mt-5">
+                    {authState === 'login' ? (
+                        <>
+                            No account? <button onClick={() => setAuthState('register')} className="p-0 text-base text-blue-500 bg-transparent border-none cursor-pointer">Register</button> | <button onClick={() => setAuthState('forgot_password')} className="p-0 text-base text-blue-500 bg-transparent border-none cursor-pointer">Forgot Password?</button>
+                        </>
+                    ) : (
+                        <>
+                            Already have an account? <button onClick={() => setAuthState('login')} className="p-0 text-base text-blue-500 bg-transparent border-none cursor-pointer">Login</button>
+                        </>
+                    )}
+                </p>
+            </div>
         </div>
-      );
-    }
-    const isYou = !msg.isIncoming;
-    const displayName = isYou ? 'You' : (msg.username || 'Stranger');
-    return (
-      <div key={index} style={{margin: '10px', textAlign: isYou ? 'right' : 'left'}}>
-        <div style={{display: 'inline-block', maxWidth: '70%', padding: '8px 12px', borderRadius: isYou ? '18px 18px 0 18px' : '18px 18px 18px 0', backgroundColor: isYou ? '#0084ff' : '#e9e9eb', color: isYou ? 'white' : 'black', wordWrap: 'break-word'}}>
-          <div style={{fontSize: '0.8em', opacity: 0.8, marginBottom: '2px'}}>{displayName}</div>
-          <div>{msg.text}</div>
-        </div>
-      </div>
     );
-  };
 
-  const renderAuthForm = () => (
-    <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#f5f5f5', textAlign: 'center', padding: '20px'}}>
-        <h1 style={{color: '#333', marginBottom: '30px'}}>Omegle Clone</h1>
-        <div style={{backgroundColor: 'white', padding: '30px', borderRadius: '10px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', width: '100%', maxWidth: '400px'}}>
-            <h2 style={{marginBottom: '20px', color: '#333'}}>
-                {authMode === 'login' && 'Login'}
-                {authMode === 'register' && 'Register'}
-                {authMode === 'forgot_password' && 'Reset Password'}
-            </h2>
-            {error && <p style={{color: 'red'}}>{error}</p>}
-            <form onSubmit={handleAuth}>
-                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username" required style={{width: '100%', padding: '12px', marginBottom: '15px', border: '1px solid #ddd', borderRadius: '5px', fontSize: '16px'}} />
-                {authMode !== 'forgot_password' && 
-                    <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" required style={{width: '100%', padding: '12px', marginBottom: '15px', border: '1px solid #ddd', borderRadius: '5px', fontSize: '16px'}} />
-                }
-                {authMode === 'forgot_password' && 
-                    <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New Password" required style={{width: '100%', padding: '12px', marginBottom: '15px', border: '1px solid #ddd', borderRadius: '5px', fontSize: '16px'}} />
-                }
-                <button type="submit" style={{width: '100%', padding: '12px', backgroundColor: '#0084ff', color: 'white', border: 'none', borderRadius: '5px', fontSize: '16px', cursor: 'pointer'}}>
-                    {authMode === 'login' && 'Login'}
-                    {authMode === 'register' && 'Register'}
-                    {authMode === 'forgot_password' && 'Reset Password'}
-                </button>
-            </form>
-            <div style={{marginTop: '15px'}}>
-                {authMode === 'login' && <a href="#" onClick={() => { setAuthMode('register'); setError(''); }}>Don't have an account? Register</a>}
-                {authMode === 'register' && <a href="#" onClick={() => { setAuthMode('login'); setError(''); }}>Already have an account? Login</a>}
-                <br/>
-                {authMode !== 'forgot_password' && <a href="#" onClick={() => { setAuthMode('forgot_password'); setError(''); }}>Forgot Password?</a>}
+    const renderWelcomeScreen = () => (
+        <div className="flex flex-col items-center justify-center h-screen text-center bg-gray-100">
+            <h1 className="mb-5 text-3xl font-bold">Ready to Chat, {loggedInUser}?</h1>
+            <div className="w-full max-w-xl mb-5 overflow-hidden rounded-lg shadow-lg">
+                <video ref={localVideoRef} autoPlay muted playsInline className="block w-full"></video>
+            </div>
+            {error && <p className="text-red-600">{error}</p>}
+            <button onClick={handleStartSearching} disabled={!localStream || chatState === 'waiting'} className="px-6 py-3 text-lg text-white bg-green-500 border-none rounded-md cursor-pointer disabled:bg-gray-500 disabled:cursor-not-allowed hover:enabled:bg-green-600">
+                {chatState === 'waiting' ? 'Searching...' : 'Start Searching'}
+            </button>
+        </div>
+    );
+
+    const renderChat = () => (
+        <div className="flex w-screen h-screen overflow-hidden">
+            <div className="relative flex-grow bg-black">
+                <video ref={remoteVideoRef} autoPlay playsInline className="object-cover w-full h-full"></video>
+                <video ref={localVideoRef} autoPlay muted playsInline className="absolute bottom-5 right-5 w-1/4 max-w-xs border-2 border-white rounded-lg shadow-md"></video>
+            </div>
+            <div className="flex flex-col flex-shrink-0 w-96 bg-white border-l border-gray-300">
+                <div className="flex flex-col flex-grow p-4 overflow-y-auto">
+                    {messages.map((msg, i) => (
+                        <div key={i} className={`max-w-xs p-3 mb-3 rounded-2xl break-words ${msg.isIncoming ? 'bg-gray-200 self-start' : 'bg-blue-500 text-white self-end'}`}>
+                            <strong className="block mb-1 text-sm opacity-80">{msg.username}</strong>
+                            {msg.text}
+                        </div>
+                    ))}
+                </div>
+                <div className="flex p-3 border-t border-gray-300">
+                    <input
+                        type="text"
+                        value={messageInput}
+                        onChange={(e) => setMessageInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
+                        placeholder="Type a message..."
+                        className="flex-grow px-4 py-2 mr-3 text-base border border-gray-300 rounded-full"
+                    />
+                    <button onClick={sendMessage} className="px-5 py-2 text-white bg-blue-500 border-none rounded-full cursor-pointer hover:bg-blue-600">Send</button>
+                </div>
+                <div className="flex gap-3 p-3 border-t border-gray-300">
+                    <button onClick={() => handleStopOrSkip('stop_chat')} className="flex-grow p-2 text-base text-white bg-red-500 border border-red-500 rounded-md cursor-pointer hover:bg-red-600">Stop</button>
+                    <button onClick={() => handleStopOrSkip('skip_chat')} className="flex-grow p-2 text-base text-gray-800 bg-yellow-400 border border-yellow-400 rounded-md cursor-pointer hover:bg-yellow-500">Skip</button>
+                </div>
             </div>
         </div>
-    </div>
-  );
+    );
 
-  const renderContent = () => {
-    if (!isAuthenticated) {
+    if (!loggedInUser) {
         return renderAuthForm();
+    } else if (chatState === 'in_chat') {
+        return renderChat();
+    } else {
+        return renderWelcomeScreen(); // Covers 'idle' and 'waiting'
     }
-
-    switch (status) {
-      case 'idle':
-        return (
-          <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#f5f5f5', textAlign: 'center', padding: '20px'}}>
-            <h1 style={{color: '#333', marginBottom: '30px'}}>Ready to Chat, {username}?</h1>
-            <button onClick={handleStartSearching} style={{padding: '15px 30px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', fontSize: '18px', cursor: 'pointer'}}>Start</button>
-          </div>
-        );
-      case 'waiting':
-      case 'in_chat':
-        return (
-          <div style={{display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: '#f5f5f5'}}>
-            <div style={{backgroundColor: '#0084ff', color: 'white', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.1)'}}>
-              <div style={{fontWeight: 'bold', fontSize: '18px'}}>
-                {status === 'in_chat' ? `Chatting with ${partnerUsername}` : 'Searching...'}
-              </div>
-              <div style={{display: 'flex', gap: '10px'}}>
-                {status === 'in_chat' && <button onClick={handleSkipChat} style={{backgroundColor: 'transparent', border: '1px solid white', color: 'white', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer'}}>⏭️ Skip</button>}
-                <button onClick={handleStopChat} style={{backgroundColor: '#ff4444', border: '1px solid #ff4444', color: 'white', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer'}}>⏹️ Stop</button>
-              </div>
-            </div>
-            <div style={{flex: 1, overflowY: 'auto', padding: '10px', backgroundColor: '#e5ddd5'}}>
-              {messages.map((msg, i) => renderMessage(msg, i))}
-              {typingUser && <div style={{margin: '10px', padding: '8px 12px', backgroundColor: '#fff', borderRadius: '18px', display: 'inline-block', boxShadow: '0 1px 2px rgba(0,0,0,0.1)'}}>{typingUser} is typing...</div>}
-              <div ref={messagesEndRef} />
-            </div>
-            {status === 'in_chat' && (
-              <div style={{backgroundColor: '#f5f5f5', padding: '10px', borderTop: '1px solid #ddd', position: 'relative'}}>
-                {showEmojiPicker && <div style={{position: 'absolute', bottom: '100%', right: '10px', marginBottom: '10px', zIndex: 10}}><EmojiPicker onEmojiClick={onEmojiClick} width={300} height={350} /></div>}
-                <div style={{display: 'flex', alignItems: 'center', backgroundColor: 'white', borderRadius: '20px', padding: '5px 15px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)'}}>
-                  <button onClick={toggleEmojiPicker} style={{background: 'none', border: 'none', fontSize: '1.5em', cursor: 'pointer', padding: '5px', marginRight: '5px', color: '#666'}}>😊</button>
-                  <input ref={inputRef} value={input} onChange={handleInputChange} onKeyDown={(e) => e.key === 'Enter' && sendMessage()} placeholder="Type a message..." style={{flex: 1, border: 'none', outline: 'none', padding: '10px 0', fontSize: '1em', backgroundColor: 'transparent'}} />
-                  <button onClick={sendMessage} disabled={!input.trim()} style={{background: 'none', border: 'none', fontSize: '1.2em', cursor: input.trim() ? 'pointer' : 'default', padding: '5px 0 5px 10px', color: input.trim() ? '#0084ff' : '#ccc', transition: 'color 0.2s'}}>➤</button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      default:
-        return <div>Loading...</div>;
-    }
-  };
-
-  return renderContent();
 }
 
 export default App;
