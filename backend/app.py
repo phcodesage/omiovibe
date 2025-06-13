@@ -1,12 +1,41 @@
-from flask import Flask, request
+import eventlet
+eventlet.monkey_patch()
+
+from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_bcrypt import Bcrypt
+from pymongo import MongoClient
+import os
+from dotenv import load_dotenv
+from flask_cors import CORS
+
+load_dotenv()
+
+# Get allowed origins from .env, split by comma, and strip whitespace
+allowed_origins = os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
+allowed_origins = [origin.strip() for origin in allowed_origins if origin.strip()]
+
+if not allowed_origins:
+    print("Warning: CORS_ALLOWED_ORIGINS is not set. Frontend connections may fail.")
+    allowed_origins = []
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret!'
-socketio = SocketIO(app, cors_allowed_origins="*")
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'a-fallback-secret-key')
+bcrypt = Bcrypt(app)
+CORS(app, origins=allowed_origins)
+socketio = SocketIO(app, cors_allowed_origins=allowed_origins)
 
-# In-memory data stores
-users = {}
+# MongoDB Configuration
+MONGO_URI = os.getenv('MONGO_URI')
+if not MONGO_URI:
+    raise RuntimeError("MONGO_URI not set in .env file")
+client = MongoClient(MONGO_URI)
+db = client['omegle_clone']
+users_collection = db['users']
+print("MongoDB connected successfully.")
+
+# In-memory data stores for active users
+users = {}  # sid -> {'username': '...'}
 waiting_users = []  # List of sids
 paired_users = {}  # sid -> room_id
 
@@ -16,7 +45,7 @@ def _try_pair_users():
         user2_sid = waiting_users.pop(0)
 
         room = f"{user1_sid}-{user2_sid}"
-
+ 
         paired_users[user1_sid] = room
         paired_users[user2_sid] = room
 
@@ -28,6 +57,57 @@ def _try_pair_users():
 
         emit('matched', {'partner_username': user2_username}, to=user1_sid)
         emit('matched', {'partner_username': user1_username}, to=user2_sid)
+
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({'error': 'Username and password are required'}), 400
+
+    if users_collection.find_one({'username': username}):
+        return jsonify({'error': 'Username already exists'}), 409
+
+    hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
+    users_collection.insert_one({'username': username, 'password': hashed_password})
+    
+    return jsonify({'message': 'User registered successfully'}), 201
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    username = data.get('username')
+    password = data.get('password')
+
+    if not username or not password:
+        return jsonify({'error': 'Username and password are required'}), 400
+
+    user = users_collection.find_one({'username': username})
+
+    if user and bcrypt.check_password_hash(user['password'], password):
+        return jsonify({'message': 'Login successful', 'username': username}), 200
+    
+    return jsonify({'error': 'Invalid username or password'}), 401
+
+@app.route('/forgot_password', methods=['POST'])
+def forgot_password():
+    data = request.get_json()
+    username = data.get('username')
+    new_password = data.get('new_password')
+
+    if not username or not new_password:
+        return jsonify({'error': 'Username and new password are required'}), 400
+
+    user = users_collection.find_one({'username': username})
+    if not user:
+        return jsonify({'error': 'Username not found'}), 404
+
+    hashed_password = bcrypt.generate_password_hash(new_password).decode('utf-8')
+    users_collection.update_one({'username': username}, {'$set': {'password': hashed_password}})
+    
+    return jsonify({'message': 'Password updated successfully'}), 200
 
 @socketio.on('connect')
 def handle_connect():
@@ -70,9 +150,15 @@ def handle_set_username(data):
         emit('username_set')
 
 @socketio.on('start_searching')
-def handle_start_searching():
+def handle_start_searching(data):
     sid = request.sid
-    if sid not in users or sid in paired_users:
+    username = data.get('username')
+    if not username:
+        return
+
+    users[sid] = {'username': username}
+
+    if sid in paired_users:
         return
 
     if sid not in waiting_users:

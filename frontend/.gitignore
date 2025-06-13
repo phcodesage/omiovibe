@@ -2,6 +2,9 @@ node_modules
 package-lock.json
 yarn.lock
 yarn-error.log
+# environment variables
 .env
-yarn-error.log
-yarn-error.log
+.env.local
+.env.development
+.env.test
+.env.production

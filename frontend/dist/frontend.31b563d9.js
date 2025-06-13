@@ -24954,17 +24954,23 @@ var _socketIoClient = require("socket.io-client");
 var _emojiPickerReact = require("emoji-picker-react");
 var _emojiPickerReactDefault = parcelHelpers.interopDefault(_emojiPickerReact);
 var _s = $RefreshSig$();
-const socket = (0, _socketIoClient.io)('http://localhost:5000');
+const backendUrl = "http://localhost:5000";
+const socket = (0, _socketIoClient.io)(backendUrl);
 function App() {
     _s();
     const [messages, setMessages] = (0, _react.useState)([]);
     const [input, setInput] = (0, _react.useState)("");
     const [username, setUsername] = (0, _react.useState)("");
+    const [password, setPassword] = (0, _react.useState)("");
+    const [newPassword, setNewPassword] = (0, _react.useState)("");
+    const [isAuthenticated, setIsAuthenticated] = (0, _react.useState)(false);
     const [isTyping, setIsTyping] = (0, _react.useState)(false);
     const [typingUser, setTypingUser] = (0, _react.useState)("");
     const [partnerUsername, setPartnerUsername] = (0, _react.useState)("");
     const [showEmojiPicker, setShowEmojiPicker] = (0, _react.useState)(false);
-    const [status, setStatus] = (0, _react.useState)('prompt_username'); // 'prompt_username', 'idle', 'waiting', 'in_chat'
+    const [status, setStatus] = (0, _react.useState)('idle'); // 'idle', 'waiting', 'in_chat'
+    const [authMode, setAuthMode] = (0, _react.useState)('login'); // 'login', 'register', 'forgot_password'
+    const [error, setError] = (0, _react.useState)('');
     const typingTimeoutRef = (0, _react.useRef)(null);
     const inputRef = (0, _react.useRef)(null);
     const messagesEndRef = (0, _react.useRef)(null);
@@ -24976,7 +24982,7 @@ function App() {
         messages
     ]);
     (0, _react.useEffect)(()=>{
-        const onUsernameSet = ()=>setStatus('idle');
+        if (!isAuthenticated) return;
         const onWaiting = ()=>{
             setMessages((prev)=>[
                     ...prev,
@@ -25043,7 +25049,6 @@ function App() {
         };
         const onUserTyping = (data)=>setTypingUser(data.username || 'Stranger');
         const onUserStoppedTyping = ()=>setTypingUser('');
-        socket.on('username_set', onUsernameSet);
         socket.on('waiting', onWaiting);
         socket.on('matched', onMatched);
         socket.on('stopped_chat', onStoppedChat);
@@ -25053,7 +25058,6 @@ function App() {
         socket.on('user_typing', onUserTyping);
         socket.on('user_stopped_typing', onUserStoppedTyping);
         return ()=>{
-            socket.off('username_set', onUsernameSet);
             socket.off('waiting', onWaiting);
             socket.off('matched', onMatched);
             socket.off('stopped_chat', onStoppedChat);
@@ -25063,13 +25067,54 @@ function App() {
             socket.off('user_typing', onUserTyping);
             socket.off('user_stopped_typing', onUserStoppedTyping);
         };
-    }, []);
-    const handleSetUsername = ()=>{
-        if (username.trim()) socket.emit('set_username', {
-            username: username.trim()
-        });
+    }, [
+        isAuthenticated
+    ]);
+    const handleAuth = async (e)=>{
+        e.preventDefault();
+        setError('');
+        let url = `${backendUrl}/${authMode}`;
+        let body = {
+            username,
+            password
+        };
+        if (authMode === 'register') ;
+        else if (authMode === 'login') ;
+        else if (authMode === 'forgot_password') {
+            url = `${backendUrl}/forgot_password`;
+            body = {
+                username,
+                new_password: newPassword
+            };
+        }
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(body)
+            });
+            const data = await response.json();
+            if (response.ok) {
+                if (authMode === 'login') {
+                    setIsAuthenticated(true);
+                    setUsername(data.username);
+                } else if (authMode === 'register') {
+                    setAuthMode('login');
+                    alert('Registration successful! Please log in.');
+                } else if (authMode === 'forgot_password') {
+                    setAuthMode('login');
+                    alert('Password has been reset! Please log in.');
+                }
+            } else setError(data.error || 'An unknown error occurred.');
+        } catch (err) {
+            setError('Failed to connect to the server.');
+        }
     };
-    const handleStartSearching = ()=>socket.emit('start_searching');
+    const handleStartSearching = ()=>socket.emit('start_searching', {
+            username
+        });
     const handleStopChat = ()=>socket.emit('stop_chat');
     const handleSkipChat = ()=>socket.emit('skip_chat');
     const handleInputChange = (e)=>{
@@ -25134,7 +25179,7 @@ function App() {
             children: msg.text
         }, index, false, {
             fileName: "src/App.js",
-            lineNumber: 138,
+            lineNumber: 180,
             columnNumber: 9
         }, this);
         const isYou = !msg.isIncoming;
@@ -25164,81 +25209,95 @@ function App() {
                         children: displayName
                     }, void 0, false, {
                         fileName: "src/App.js",
-                        lineNumber: 148,
+                        lineNumber: 190,
                         columnNumber: 11
                     }, this),
                     /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
                         children: msg.text
                     }, void 0, false, {
                         fileName: "src/App.js",
-                        lineNumber: 149,
+                        lineNumber: 191,
                         columnNumber: 11
                     }, this)
                 ]
             }, void 0, true, {
                 fileName: "src/App.js",
-                lineNumber: 147,
+                lineNumber: 189,
                 columnNumber: 9
             }, this)
         }, index, false, {
             fileName: "src/App.js",
-            lineNumber: 146,
+            lineNumber: 188,
             columnNumber: 7
         }, this);
     };
-    const renderContent = ()=>{
-        switch(status){
-            case 'prompt_username':
-                return /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
+    const renderAuthForm = ()=>/*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
+            style: {
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '100vh',
+                backgroundColor: '#f5f5f5',
+                textAlign: 'center',
+                padding: '20px'
+            },
+            children: [
+                /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("h1", {
                     style: {
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        height: '100vh',
-                        backgroundColor: '#f5f5f5',
-                        textAlign: 'center',
-                        padding: '20px'
+                        color: '#333',
+                        marginBottom: '30px'
+                    },
+                    children: "Omegle Clone"
+                }, void 0, false, {
+                    fileName: "src/App.js",
+                    lineNumber: 199,
+                    columnNumber: 9
+                }, this),
+                /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
+                    style: {
+                        backgroundColor: 'white',
+                        padding: '30px',
+                        borderRadius: '10px',
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+                        width: '100%',
+                        maxWidth: '400px'
                     },
                     children: [
-                        /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("h1", {
+                        /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("h2", {
                             style: {
-                                color: '#333',
-                                marginBottom: '30px'
-                            },
-                            children: "Omegle Clone"
-                        }, void 0, false, {
-                            fileName: "src/App.js",
-                            lineNumber: 160,
-                            columnNumber: 13
-                        }, this),
-                        /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
-                            style: {
-                                backgroundColor: 'white',
-                                padding: '30px',
-                                borderRadius: '10px',
-                                boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
-                                width: '100%',
-                                maxWidth: '400px'
+                                marginBottom: '20px',
+                                color: '#333'
                             },
                             children: [
-                                /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("h2", {
-                                    style: {
-                                        marginBottom: '20px',
-                                        color: '#333'
-                                    },
-                                    children: "Enter Your Username"
-                                }, void 0, false, {
-                                    fileName: "src/App.js",
-                                    lineNumber: 162,
-                                    columnNumber: 15
-                                }, this),
+                                authMode === 'login' && 'Login',
+                                authMode === 'register' && 'Register',
+                                authMode === 'forgot_password' && 'Reset Password'
+                            ]
+                        }, void 0, true, {
+                            fileName: "src/App.js",
+                            lineNumber: 201,
+                            columnNumber: 13
+                        }, this),
+                        error && /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("p", {
+                            style: {
+                                color: 'red'
+                            },
+                            children: error
+                        }, void 0, false, {
+                            fileName: "src/App.js",
+                            lineNumber: 206,
+                            columnNumber: 23
+                        }, this),
+                        /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("form", {
+                            onSubmit: handleAuth,
+                            children: [
                                 /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("input", {
                                     type: "text",
                                     value: username,
                                     onChange: (e)=>setUsername(e.target.value),
-                                    onKeyDown: (e)=>e.key === 'Enter' && handleSetUsername(),
-                                    placeholder: "Choose a username",
+                                    placeholder: "Username",
+                                    required: true,
                                     style: {
                                         width: '100%',
                                         padding: '12px',
@@ -25249,11 +25308,49 @@ function App() {
                                     }
                                 }, void 0, false, {
                                     fileName: "src/App.js",
-                                    lineNumber: 163,
-                                    columnNumber: 15
+                                    lineNumber: 208,
+                                    columnNumber: 17
+                                }, this),
+                                authMode !== 'forgot_password' && /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("input", {
+                                    type: "password",
+                                    value: password,
+                                    onChange: (e)=>setPassword(e.target.value),
+                                    placeholder: "Password",
+                                    required: true,
+                                    style: {
+                                        width: '100%',
+                                        padding: '12px',
+                                        marginBottom: '15px',
+                                        border: '1px solid #ddd',
+                                        borderRadius: '5px',
+                                        fontSize: '16px'
+                                    }
+                                }, void 0, false, {
+                                    fileName: "src/App.js",
+                                    lineNumber: 210,
+                                    columnNumber: 21
+                                }, this),
+                                authMode === 'forgot_password' && /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("input", {
+                                    type: "password",
+                                    value: newPassword,
+                                    onChange: (e)=>setNewPassword(e.target.value),
+                                    placeholder: "New Password",
+                                    required: true,
+                                    style: {
+                                        width: '100%',
+                                        padding: '12px',
+                                        marginBottom: '15px',
+                                        border: '1px solid #ddd',
+                                        borderRadius: '5px',
+                                        fontSize: '16px'
+                                    }
+                                }, void 0, false, {
+                                    fileName: "src/App.js",
+                                    lineNumber: 213,
+                                    columnNumber: 21
                                 }, this),
                                 /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("button", {
-                                    onClick: handleSetUsername,
+                                    type: "submit",
                                     style: {
                                         width: '100%',
                                         padding: '12px',
@@ -25262,27 +25359,91 @@ function App() {
                                         border: 'none',
                                         borderRadius: '5px',
                                         fontSize: '16px',
-                                        cursor: 'pointer',
-                                        transition: 'background-color 0.2s'
+                                        cursor: 'pointer'
                                     },
-                                    children: "Start Chatting"
-                                }, void 0, false, {
+                                    children: [
+                                        authMode === 'login' && 'Login',
+                                        authMode === 'register' && 'Register',
+                                        authMode === 'forgot_password' && 'Reset Password'
+                                    ]
+                                }, void 0, true, {
                                     fileName: "src/App.js",
-                                    lineNumber: 164,
-                                    columnNumber: 15
+                                    lineNumber: 215,
+                                    columnNumber: 17
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "src/App.js",
-                            lineNumber: 161,
+                            lineNumber: 207,
+                            columnNumber: 13
+                        }, this),
+                        /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
+                            style: {
+                                marginTop: '15px'
+                            },
+                            children: [
+                                authMode === 'login' && /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("a", {
+                                    href: "#",
+                                    onClick: ()=>{
+                                        setAuthMode('register');
+                                        setError('');
+                                    },
+                                    children: "Don't have an account? Register"
+                                }, void 0, false, {
+                                    fileName: "src/App.js",
+                                    lineNumber: 222,
+                                    columnNumber: 42
+                                }, this),
+                                authMode === 'register' && /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("a", {
+                                    href: "#",
+                                    onClick: ()=>{
+                                        setAuthMode('login');
+                                        setError('');
+                                    },
+                                    children: "Already have an account? Login"
+                                }, void 0, false, {
+                                    fileName: "src/App.js",
+                                    lineNumber: 223,
+                                    columnNumber: 45
+                                }, this),
+                                /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("br", {}, void 0, false, {
+                                    fileName: "src/App.js",
+                                    lineNumber: 224,
+                                    columnNumber: 17
+                                }, this),
+                                authMode !== 'forgot_password' && /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("a", {
+                                    href: "#",
+                                    onClick: ()=>{
+                                        setAuthMode('forgot_password');
+                                        setError('');
+                                    },
+                                    children: "Forgot Password?"
+                                }, void 0, false, {
+                                    fileName: "src/App.js",
+                                    lineNumber: 225,
+                                    columnNumber: 52
+                                }, this)
+                            ]
+                        }, void 0, true, {
+                            fileName: "src/App.js",
+                            lineNumber: 221,
                             columnNumber: 13
                         }, this)
                     ]
                 }, void 0, true, {
                     fileName: "src/App.js",
-                    lineNumber: 159,
-                    columnNumber: 11
-                }, this);
+                    lineNumber: 200,
+                    columnNumber: 9
+                }, this)
+            ]
+        }, void 0, true, {
+            fileName: "src/App.js",
+            lineNumber: 198,
+            columnNumber: 5
+        }, this);
+    const renderContent = ()=>{
+        if (!isAuthenticated) return renderAuthForm();
+        switch(status){
             case 'idle':
                 return /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
                     style: {
@@ -25301,11 +25462,15 @@ function App() {
                                 color: '#333',
                                 marginBottom: '30px'
                             },
-                            children: "Ready to Chat?"
-                        }, void 0, false, {
+                            children: [
+                                "Ready to Chat, ",
+                                username,
+                                "?"
+                            ]
+                        }, void 0, true, {
                             fileName: "src/App.js",
-                            lineNumber: 171,
-                            columnNumber: 17
+                            lineNumber: 240,
+                            columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("button", {
                             onClick: handleStartSearching,
@@ -25321,14 +25486,14 @@ function App() {
                             children: "Start"
                         }, void 0, false, {
                             fileName: "src/App.js",
-                            lineNumber: 172,
-                            columnNumber: 17
+                            lineNumber: 241,
+                            columnNumber: 13
                         }, this)
                     ]
                 }, void 0, true, {
                     fileName: "src/App.js",
-                    lineNumber: 170,
-                    columnNumber: 13
+                    lineNumber: 239,
+                    columnNumber: 11
                 }, this);
             case 'waiting':
             case 'in_chat':
@@ -25359,7 +25524,7 @@ function App() {
                                     children: status === 'in_chat' ? `Chatting with ${partnerUsername}` : 'Searching...'
                                 }, void 0, false, {
                                     fileName: "src/App.js",
-                                    lineNumber: 180,
+                                    lineNumber: 249,
                                     columnNumber: 15
                                 }, this),
                                 /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
@@ -25381,7 +25546,7 @@ function App() {
                                             children: "\u23ED\uFE0F Skip"
                                         }, void 0, false, {
                                             fileName: "src/App.js",
-                                            lineNumber: 184,
+                                            lineNumber: 253,
                                             columnNumber: 42
                                         }, this),
                                         /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("button", {
@@ -25397,19 +25562,19 @@ function App() {
                                             children: "\u23F9\uFE0F Stop"
                                         }, void 0, false, {
                                             fileName: "src/App.js",
-                                            lineNumber: 185,
+                                            lineNumber: 254,
                                             columnNumber: 17
                                         }, this)
                                     ]
                                 }, void 0, true, {
                                     fileName: "src/App.js",
-                                    lineNumber: 183,
+                                    lineNumber: 252,
                                     columnNumber: 15
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "src/App.js",
-                            lineNumber: 179,
+                            lineNumber: 248,
                             columnNumber: 13
                         }, this),
                         /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
@@ -25436,20 +25601,20 @@ function App() {
                                     ]
                                 }, void 0, true, {
                                     fileName: "src/App.js",
-                                    lineNumber: 190,
+                                    lineNumber: 259,
                                     columnNumber: 30
                                 }, this),
                                 /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
                                     ref: messagesEndRef
                                 }, void 0, false, {
                                     fileName: "src/App.js",
-                                    lineNumber: 191,
+                                    lineNumber: 260,
                                     columnNumber: 15
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "src/App.js",
-                            lineNumber: 188,
+                            lineNumber: 257,
                             columnNumber: 13
                         }, this),
                         status === 'in_chat' && /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
@@ -25474,12 +25639,12 @@ function App() {
                                         height: 350
                                     }, void 0, false, {
                                         fileName: "src/App.js",
-                                        lineNumber: 195,
+                                        lineNumber: 264,
                                         columnNumber: 138
                                     }, this)
                                 }, void 0, false, {
                                     fileName: "src/App.js",
-                                    lineNumber: 195,
+                                    lineNumber: 264,
                                     columnNumber: 37
                                 }, this),
                                 /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("div", {
@@ -25506,7 +25671,7 @@ function App() {
                                             children: "\uD83D\uDE0A"
                                         }, void 0, false, {
                                             fileName: "src/App.js",
-                                            lineNumber: 197,
+                                            lineNumber: 266,
                                             columnNumber: 19
                                         }, this),
                                         /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("input", {
@@ -25525,7 +25690,7 @@ function App() {
                                             }
                                         }, void 0, false, {
                                             fileName: "src/App.js",
-                                            lineNumber: 198,
+                                            lineNumber: 267,
                                             columnNumber: 19
                                         }, this),
                                         /*#__PURE__*/ (0, _jsxDevRuntime.jsxDEV)("button", {
@@ -25543,25 +25708,25 @@ function App() {
                                             children: "\u27A4"
                                         }, void 0, false, {
                                             fileName: "src/App.js",
-                                            lineNumber: 199,
+                                            lineNumber: 268,
                                             columnNumber: 19
                                         }, this)
                                     ]
                                 }, void 0, true, {
                                     fileName: "src/App.js",
-                                    lineNumber: 196,
+                                    lineNumber: 265,
                                     columnNumber: 17
                                 }, this)
                             ]
                         }, void 0, true, {
                             fileName: "src/App.js",
-                            lineNumber: 194,
+                            lineNumber: 263,
                             columnNumber: 15
                         }, this)
                     ]
                 }, void 0, true, {
                     fileName: "src/App.js",
-                    lineNumber: 178,
+                    lineNumber: 247,
                     columnNumber: 11
                 }, this);
             default:
@@ -25569,14 +25734,14 @@ function App() {
                     children: "Loading..."
                 }, void 0, false, {
                     fileName: "src/App.js",
-                    lineNumber: 206,
+                    lineNumber: 275,
                     columnNumber: 16
                 }, this);
         }
     };
     return renderContent();
 }
-_s(App, "QeOU8LRUCi2wpV6UCDlK6Di8KM4=");
+_s(App, "nFtUsRKO7UoxC1Y3miPP/h6C1OI=");
 _c = App;
 exports.default = App;
 var _c;

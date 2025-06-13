@@ -2,17 +2,23 @@ import React, { useEffect, useState, useRef } from 'react';
 import { io } from 'socket.io-client';
 import EmojiPicker from 'emoji-picker-react';
 
-const socket = io('http://localhost:5000');
+const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:5000';
+const socket = io(backendUrl);
 
 function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [typingUser, setTypingUser] = useState("");
   const [partnerUsername, setPartnerUsername] = useState("");
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [status, setStatus] = useState('prompt_username'); // 'prompt_username', 'idle', 'waiting', 'in_chat'
+  const [status, setStatus] = useState('idle'); // 'idle', 'waiting', 'in_chat'
+  const [authMode, setAuthMode] = useState('login'); // 'login', 'register', 'forgot_password'
+  const [error, setError] = useState('');
   const typingTimeoutRef = useRef(null);
   const inputRef = useRef(null);
   const messagesEndRef = useRef(null);
@@ -22,7 +28,8 @@ function App() {
   }, [messages]);
 
   useEffect(() => {
-    const onUsernameSet = () => setStatus('idle');
+    if (!isAuthenticated) return;
+
     const onWaiting = () => {
       setMessages(prev => [...prev, {text: "🔍 Looking for someone to chat with...", isSystem: true}]);
       setStatus('waiting');
@@ -54,7 +61,6 @@ function App() {
     const onUserTyping = (data) => setTypingUser(data.username || 'Stranger');
     const onUserStoppedTyping = () => setTypingUser('');
 
-    socket.on('username_set', onUsernameSet);
     socket.on('waiting', onWaiting);
     socket.on('matched', onMatched);
     socket.on('stopped_chat', onStoppedChat);
@@ -65,7 +71,6 @@ function App() {
     socket.on('user_stopped_typing', onUserStoppedTyping);
 
     return () => {
-      socket.off('username_set', onUsernameSet);
       socket.off('waiting', onWaiting);
       socket.off('matched', onMatched);
       socket.off('stopped_chat', onStoppedChat);
@@ -75,15 +80,52 @@ function App() {
       socket.off('user_typing', onUserTyping);
       socket.off('user_stopped_typing', onUserStoppedTyping);
     };
-  }, []);
+  }, [isAuthenticated]);
 
-  const handleSetUsername = () => {
-    if (username.trim()) {
-      socket.emit('set_username', { username: username.trim() });
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setError('');
+    let url = `${backendUrl}/${authMode}`;
+    let body = { username, password };
+
+    if (authMode === 'register') {
+        // No change to body
+    } else if (authMode === 'login') {
+        // No change to body
+    } else if (authMode === 'forgot_password') {
+        url = `${backendUrl}/forgot_password`;
+        body = { username, new_password: newPassword };
+    }
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            if (authMode === 'login') {
+                setIsAuthenticated(true);
+                setUsername(data.username);
+            } else if (authMode === 'register') {
+                setAuthMode('login');
+                alert('Registration successful! Please log in.');
+            } else if (authMode === 'forgot_password') {
+                setAuthMode('login');
+                alert('Password has been reset! Please log in.');
+            }
+        } else {
+            setError(data.error || 'An unknown error occurred.');
+        }
+    } catch (err) {
+        setError('Failed to connect to the server.');
     }
   };
 
-  const handleStartSearching = () => socket.emit('start_searching');
+  const handleStartSearching = () => socket.emit('start_searching', { username });
   const handleStopChat = () => socket.emit('stop_chat');
   const handleSkipChat = () => socket.emit('skip_chat');
 
@@ -152,25 +194,52 @@ function App() {
     );
   };
 
-  const renderContent = () => {
-    switch (status) {
-      case 'prompt_username':
-        return (
-          <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#f5f5f5', textAlign: 'center', padding: '20px'}}>
-            <h1 style={{color: '#333', marginBottom: '30px'}}>Omegle Clone</h1>
-            <div style={{backgroundColor: 'white', padding: '30px', borderRadius: '10px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', width: '100%', maxWidth: '400px'}}>
-              <h2 style={{marginBottom: '20px', color: '#333'}}>Enter Your Username</h2>
-              <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSetUsername()} placeholder="Choose a username" style={{width: '100%', padding: '12px', marginBottom: '15px', border: '1px solid #ddd', borderRadius: '5px', fontSize: '16px'}} />
-              <button onClick={handleSetUsername} style={{width: '100%', padding: '12px', backgroundColor: '#0084ff', color: 'white', border: 'none', borderRadius: '5px', fontSize: '16px', cursor: 'pointer', transition: 'background-color 0.2s'}}>Start Chatting</button>
+  const renderAuthForm = () => (
+    <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#f5f5f5', textAlign: 'center', padding: '20px'}}>
+        <h1 style={{color: '#333', marginBottom: '30px'}}>Omegle Clone</h1>
+        <div style={{backgroundColor: 'white', padding: '30px', borderRadius: '10px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', width: '100%', maxWidth: '400px'}}>
+            <h2 style={{marginBottom: '20px', color: '#333'}}>
+                {authMode === 'login' && 'Login'}
+                {authMode === 'register' && 'Register'}
+                {authMode === 'forgot_password' && 'Reset Password'}
+            </h2>
+            {error && <p style={{color: 'red'}}>{error}</p>}
+            <form onSubmit={handleAuth}>
+                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Username" required style={{width: '100%', padding: '12px', marginBottom: '15px', border: '1px solid #ddd', borderRadius: '5px', fontSize: '16px'}} />
+                {authMode !== 'forgot_password' && 
+                    <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" required style={{width: '100%', padding: '12px', marginBottom: '15px', border: '1px solid #ddd', borderRadius: '5px', fontSize: '16px'}} />
+                }
+                {authMode === 'forgot_password' && 
+                    <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="New Password" required style={{width: '100%', padding: '12px', marginBottom: '15px', border: '1px solid #ddd', borderRadius: '5px', fontSize: '16px'}} />
+                }
+                <button type="submit" style={{width: '100%', padding: '12px', backgroundColor: '#0084ff', color: 'white', border: 'none', borderRadius: '5px', fontSize: '16px', cursor: 'pointer'}}>
+                    {authMode === 'login' && 'Login'}
+                    {authMode === 'register' && 'Register'}
+                    {authMode === 'forgot_password' && 'Reset Password'}
+                </button>
+            </form>
+            <div style={{marginTop: '15px'}}>
+                {authMode === 'login' && <a href="#" onClick={() => { setAuthMode('register'); setError(''); }}>Don't have an account? Register</a>}
+                {authMode === 'register' && <a href="#" onClick={() => { setAuthMode('login'); setError(''); }}>Already have an account? Login</a>}
+                <br/>
+                {authMode !== 'forgot_password' && <a href="#" onClick={() => { setAuthMode('forgot_password'); setError(''); }}>Forgot Password?</a>}
             </div>
-          </div>
-        );
+        </div>
+    </div>
+  );
+
+  const renderContent = () => {
+    if (!isAuthenticated) {
+        return renderAuthForm();
+    }
+
+    switch (status) {
       case 'idle':
         return (
-            <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#f5f5f5', textAlign: 'center', padding: '20px'}}>
-                <h1 style={{color: '#333', marginBottom: '30px'}}>Ready to Chat?</h1>
-                <button onClick={handleStartSearching} style={{padding: '15px 30px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', fontSize: '18px', cursor: 'pointer'}}>Start</button>
-            </div>
+          <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: '#f5f5f5', textAlign: 'center', padding: '20px'}}>
+            <h1 style={{color: '#333', marginBottom: '30px'}}>Ready to Chat, {username}?</h1>
+            <button onClick={handleStartSearching} style={{padding: '15px 30px', backgroundColor: '#28a745', color: 'white', border: 'none', borderRadius: '5px', fontSize: '18px', cursor: 'pointer'}}>Start</button>
+          </div>
         );
       case 'waiting':
       case 'in_chat':
