@@ -6,25 +6,25 @@ app.config['SECRET_KEY'] = 'secret!'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # In-memory data stores
-waiting_users = []
-paired_users = {}  # sid -> room
-user_data = {}  # sid -> {'username': '...'}
+users = {}
+waiting_users = []  # List of sids
+paired_users = {}  # sid -> room_id
 
-def try_pair_users():
-    """Attempts to pair users from the waiting queue."""
-    while len(waiting_users) >= 2:
+def _try_pair_users():
+    if len(waiting_users) >= 2:
         user1_sid = waiting_users.pop(0)
         user2_sid = waiting_users.pop(0)
 
         room = f"{user1_sid}-{user2_sid}"
+
         paired_users[user1_sid] = room
         paired_users[user2_sid] = room
 
         join_room(room, sid=user1_sid)
         join_room(room, sid=user2_sid)
 
-        user1_username = user_data.get(user1_sid, {}).get('username', 'Stranger')
-        user2_username = user_data.get(user2_sid, {}).get('username', 'Stranger')
+        user1_username = users.get(user1_sid, {}).get('username', 'Stranger')
+        user2_username = users.get(user2_sid, {}).get('username', 'Stranger')
 
         emit('matched', {'partner_username': user2_username}, to=user1_sid)
         emit('matched', {'partner_username': user1_username}, to=user2_sid)
@@ -59,82 +59,93 @@ def handle_disconnect():
             pass # Already removed, race condition
 
     # Clean up user data
-    if sid in user_data:
-        del user_data[sid]
+    if sid in users:
+        del users[sid]
 
 @socketio.on('set_username')
 def handle_set_username(data):
     sid = request.sid
     if 'username' in data and data['username']:
-        user_data[sid] = {'username': data['username']}
+        users[sid] = {'username': data['username']}
         emit('username_set')
 
 @socketio.on('start_searching')
 def handle_start_searching():
     sid = request.sid
-    if sid not in waiting_users and sid not in paired_users:
+    if sid not in users or sid in paired_users:
+        return
+
+    if sid not in waiting_users:
         waiting_users.append(sid)
-        emit('waiting')
-        try_pair_users()
+
+    emit('waiting', to=sid)
+    _try_pair_users()
 
 @socketio.on('stop_chat')
 def handle_stop_chat():
     sid = request.sid
-    
+
     if sid in waiting_users:
-        try:
-            waiting_users.remove(sid)
-        except ValueError:
-            pass
-    
-    elif sid in paired_users:
-        room = paired_users.pop(sid)
+        waiting_users.remove(sid)
+        emit('stopped_chat', to=sid)
+        return
+
+    room = paired_users.pop(sid, None)
+    if room:
+        emit('stopped_chat', to=sid)
+
         partner_sid = None
         for p_sid, p_room in list(paired_users.items()):
             if p_room == room:
                 partner_sid = p_sid
                 break
-        
+
         if partner_sid:
             paired_users.pop(partner_sid)
-            leave_room(room, sid=sid)
-            leave_room(room, sid=partner_sid)
             emit('partner_disconnected', to=partner_sid)
-    
-    emit('stopped_chat')
+
+            if partner_sid not in waiting_users:
+                waiting_users.append(partner_sid)
+
+            emit('waiting', to=partner_sid)
+            _try_pair_users()
 
 @socketio.on('skip_chat')
 def handle_skip_chat():
     sid = request.sid
-    if sid in paired_users:
-        room = paired_users.pop(sid)
-        partner_sid = None
-        for p_sid, p_room in list(paired_users.items()):
-            if p_room == room:
-                partner_sid = p_sid
-                break
-        
-        if partner_sid:
-            paired_users.pop(partner_sid)
-            leave_room(room, sid=sid)
-            leave_room(room, sid=partner_sid)
-            emit('partner_skipped', to=partner_sid)
-            if partner_sid not in waiting_users:
-                waiting_users.append(partner_sid)
+    room = paired_users.get(sid)
 
-        if sid not in waiting_users:
-            waiting_users.append(sid)
-        
-        emit('waiting', to=sid)
+    if not room:
+        return
+
+    partner_sid = None
+    for p_sid, p_room in list(paired_users.items()):
+        if p_room == room and p_sid != sid:
+            partner_sid = p_sid
+            break
+
+    paired_users.pop(sid, None)
+    if partner_sid:
+        paired_users.pop(partner_sid, None)
+        emit('partner_skipped', to=partner_sid)
+
+    if sid not in waiting_users:
+        waiting_users.append(sid)
+    emit('waiting', to=sid)
+
+    if partner_sid and partner_sid not in waiting_users:
+        waiting_users.append(partner_sid)
         emit('waiting', to=partner_sid)
-        try_pair_users()
+
+    _try_pair_users()
+    _try_pair_users()
 
 @socketio.on('chat_message')
 def handle_chat_message(data):
     sid = request.sid
     if sid in paired_users:
         room = paired_users[sid]
-        username = user_data.get(sid, {}).get('username', 'Stranger')
+        username = users.get(sid, {}).get('username', 'Stranger')
         emit('chat_message', {'text': data['text'], 'username': username}, room=room, skip_sid=sid)
 
 @socketio.on('typing')
@@ -142,7 +153,7 @@ def handle_typing():
     sid = request.sid
     if sid in paired_users:
         room = paired_users[sid]
-        username = user_data.get(sid, {}).get('username', 'Stranger')
+        username = users.get(sid, {}).get('username', 'Stranger')
         emit('user_typing', {'username': username}, room=room, skip_sid=sid)
 
 @socketio.on('stop_typing')
