@@ -1,10 +1,10 @@
-import React from 'react';
 import ChatInterface from './components/ChatInterface';
 import { useSocket } from './hooks/useSocket';
 import { MessageCircle } from 'lucide-react';
 
 function App() {
-  const { socket, isConnected } = useSocket('http://localhost:3001');
+  const serverUrl = import.meta.env.VITE_SERVER_URL
+  const { socket, isConnected } = useSocket(serverUrl);
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">

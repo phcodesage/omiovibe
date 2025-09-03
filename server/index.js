@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -8,12 +9,12 @@ const app = express();
 const server = createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
-    methods: ["GET", "POST"]
+    origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+    methods: ['GET', 'POST']
   }
 });
 
-app.use(cors());
+app.use(cors({ origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173' }));
 app.use(express.json());
 
 // Store waiting users and active chats
@@ -128,7 +129,7 @@ io.on('connection', (socket) => {
     io.to(chatRoom.id).emit('new-message', {
       id: message.id,
       message: message.message,
-      sender: userId === socket.id ? 'you' : 'stranger',
+      senderId: userId,
       timestamp: message.timestamp
     });
   });
@@ -201,7 +202,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

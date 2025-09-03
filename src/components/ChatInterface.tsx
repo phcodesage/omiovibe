@@ -46,9 +46,11 @@ export default function ChatInterface({ socket, isConnected }: ChatInterfaceProp
       addSystemMessage('Connected to a stranger! Say hello.');
     });
 
-    socket.on('new-message', (data: Message) => {
+    socket.on('new-message', (data: { id: string; message: string; senderId: string; timestamp: string | Date }) => {
       setMessages(prev => [...prev, {
-        ...data,
+        id: data.id,
+        message: data.message,
+        sender: data.senderId === socket.id ? 'you' : 'stranger',
         timestamp: new Date(data.timestamp)
       }]);
     });
